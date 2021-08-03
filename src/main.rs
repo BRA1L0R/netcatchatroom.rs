@@ -10,40 +10,34 @@ use crate::clienthandle::DisconnectError;
 mod clienthandle;
 mod connection;
 mod event;
+mod iphash;
+mod logger;
 mod ratelimiter;
 
 const BANTIME: Duration = Duration::from_secs(10);
-
-async fn message_logger(ms: Arc<EventSystem>) {
-    let mut rx = ms.subscribe();
-    while let Ok(evt) = rx.recv().await {
-        println!("{}", evt);
-    }
-}
 
 async fn run() -> Result<(), io::Error> {
     let listener = TcpListener::bind("0.0.0.0:6161").await.unwrap();
     let ms = Arc::new(EventSystem::new(50));
 
-    {
-        let ms = Arc::clone(&ms);
-        tokio::spawn(message_logger(ms));
-    }
+    // spawn an event logger
+    tokio::spawn(logger::message_logger(Arc::clone(&ms)));
 
-    let limiter = Arc::new(ratelimiter::RateLimiter::new());
+    // instantiates a new IpBanner
+    let banner = Arc::new(ratelimiter::IpBanner::new());
 
     loop {
         let (socket, _) = listener.accept().await?;
         let remote = socket.peer_addr().unwrap().ip();
 
         // ratelimit checking
-        if limiter.is_blacklisted(&remote).await {
+        if banner.is_blacklisted(&remote).await {
             continue;
         };
 
         // clone all the values the coroutine will need
         let ms = Arc::clone(&ms);
-        let limiter = limiter.clone();
+        let limiter = banner.clone();
 
         // launch the coroutine
         tokio::spawn(async move {

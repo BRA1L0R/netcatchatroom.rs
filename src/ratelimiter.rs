@@ -6,13 +6,13 @@ use std::{
 
 use tokio::sync::Mutex;
 
-pub struct RateLimiter {
+pub struct IpBanner {
     list: Mutex<HashMap<IpAddr, SystemTime>>,
 }
 
-impl RateLimiter {
-    pub fn new() -> RateLimiter {
-        RateLimiter {
+impl IpBanner {
+    pub fn new() -> IpBanner {
+        IpBanner {
             list: Mutex::new(HashMap::new()),
         }
     }
@@ -28,6 +28,8 @@ impl RateLimiter {
             None => false,
             Some(v) => {
                 let bled = SystemTime::now() < *v;
+
+                // remove from hashmap if not blacklisted anymore
                 if !bled {
                     list.remove(ip);
                 }

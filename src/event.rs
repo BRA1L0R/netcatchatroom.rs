@@ -1,39 +1,36 @@
 // use std::io;
-use std::{fmt::Display, net::IpAddr};
+use crate::{clienthandle::DisconnectError, connection::Message};
+use displaydoc::Display;
+use std::net::IpAddr;
 use tokio::sync::broadcast::{self, Receiver, Sender};
 
-use crate::{clienthandle::DisconnectError, connection::Message};
-
-#[derive(Clone, Debug)]
-pub struct MessageEvent {
-    pub sender: IpAddr,
-    pub message: Message,
+#[derive(Clone, Debug, Display)]
+pub enum EventType {
+    /// {0}
+    Message(Message),
+    /// disconnected from the server
+    Disconnect(DisconnectError),
+    /// connected to the server
+    Connect,
 }
 
 #[derive(Clone, Debug)]
-pub enum Event {
-    Message(MessageEvent),
-    Connect(IpAddr),
-    Disconnect(IpAddr, DisconnectError),
+pub struct Event {
+    pub origin: Option<IpAddr>,
+    pub event: EventType,
 }
 
-impl Display for Event {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Event::Message(msg) => write!(f, "{} > {}", msg.sender, msg.message.content),
-            Event::Connect(ip) => write!(f, "{} connected to the server", ip),
-
-            Event::Disconnect(ip, DisconnectError::Spam) => {
-                write!(f, "{} has been kicked for spamming", ip)
-            }
-            Event::Disconnect(ip, _) => write!(f, "{} disconnected from the server", ip),
+impl Event {
+    pub fn new(ip: IpAddr, event: EventType) -> Event {
+        Event {
+            origin: Some(ip),
+            event,
         }
     }
 }
 
 pub struct EventSystem {
     tx: Sender<Event>,
-    // rx: Receiver<Message>,
 }
 
 impl EventSystem {

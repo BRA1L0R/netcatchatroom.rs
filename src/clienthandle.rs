@@ -4,7 +4,8 @@ use tokio::net::TcpStream;
 use tokio::sync::broadcast::error::{RecvError, SendError};
 
 use crate::connection::{self, Connection, Message};
-use crate::event::{Event, EventSystem, MessageEvent};
+use crate::event::{Event, EventSystem, EventType};
+use crate::iphash::HashToString;
 
 enum ProcessLoop {
     ConnectionMessage(Message),
@@ -20,7 +21,6 @@ pub enum DisconnectError {
 #[derive(Debug)]
 pub enum HandleExit {
     IoError(std::io::Error),
-
     RecvError(RecvError),
     SendError(SendError<Event>),
 
@@ -54,12 +54,21 @@ impl From<connection::ConnectionError> for HandleExit {
     }
 }
 
+fn format_event(origin: String, evt: Event) -> String {
+    if let EventType::Message(msg) = evt.event {
+        format!("<{}> {}\n", origin, msg) // format like this if it's a message
+    } else {
+        format!("{} - {}\n", origin, evt.event) // format like this if it's any other type of event
+    }
+}
+
 async fn handle_client(mut conn: Connection, ms: Arc<EventSystem>) -> Result<(), HandleExit> {
     let sender = ms.sender();
     let mut sub = ms.subscribe();
 
     // send a connect event
-    sender.send(Event::Connect(conn.remote()))?;
+    let event = Event::new(conn.remote(), EventType::Connect);
+    sender.send(event)?;
 
     // setup a rate limiter using the leaky bucket algorithm
     let limiter = RateLimiter::builder()
@@ -78,14 +87,17 @@ async fn handle_client(mut conn: Connection, ms: Arc<EventSystem>) -> Result<(),
         let message = match evt {
             ProcessLoop::ConnectionMessage(message) if !message.content.is_empty() => message,
             ProcessLoop::ServerEvent(evt) => {
+                let origin = evt
+                    .origin
+                    .map_or("Server".to_string(), |ip| ip.hash_to_string());
+
                 conn.write_message(&Message {
-                    content: format!("{}\n", evt),
+                    content: format_event(origin, evt),
                 })
                 .await?;
 
                 continue;
             }
-
             _ => continue,
         };
 
@@ -97,12 +109,8 @@ async fn handle_client(mut conn: Connection, ms: Arc<EventSystem>) -> Result<(),
         // acquire one from the leaky bucket
         limiter.acquire_one().await;
 
-        let event = Event::Message(MessageEvent {
-            sender: conn.remote(),
-            message,
-        });
-
         // send message event
+        let event = Event::new(conn.remote(), EventType::Message(message));
         sender.send(event)?;
     }
 }
@@ -116,7 +124,8 @@ pub async fn process_client(socket: TcpStream, ms: Arc<EventSystem>) -> Result<(
         .map_err(|err| match err {
             HandleExit::Disconnect(d) => {
                 // send out a disconnection event
-                ms.sender().send(Event::Disconnect(remote, d.clone()))?;
+                let event = Event::new(remote, EventType::Disconnect(d.clone()));
+                ms.sender().send(event)?;
 
                 // return the error to the top function
                 Err(HandleExit::Disconnect(d))

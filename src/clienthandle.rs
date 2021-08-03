@@ -14,7 +14,7 @@ enum ProcessLoop {
 
 #[derive(Debug, Clone)]
 pub enum DisconnectError {
-    EOF,
+    Eof,
     Spam,
 }
 
@@ -49,7 +49,7 @@ impl From<connection::ConnectionError> for HandleExit {
     fn from(err: connection::ConnectionError) -> Self {
         match err {
             connection::ConnectionError::IoError(err) => HandleExit::IoError(err),
-            connection::ConnectionError::Eof => HandleExit::Disconnect(DisconnectError::EOF),
+            connection::ConnectionError::Eof => HandleExit::Disconnect(DisconnectError::Eof),
         }
     }
 }

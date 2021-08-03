@@ -14,6 +14,6 @@ impl HashToString for IpAddr {
         self.hash(&mut hasher);
 
         let hash = hasher.finish().to_be_bytes();
-        return hex::encode(hash);
+        hex::encode(hash)
     }
 }

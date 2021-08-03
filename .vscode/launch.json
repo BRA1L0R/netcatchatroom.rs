@@ -7,15 +7,15 @@
         {
             "type": "lldb",
             "request": "launch",
-            "name": "Debug executable 'echoserver'",
+            "name": "Debug executable 'netcatchatroom'",
             "cargo": {
                 "args": [
                     "build",
-                    "--bin=echoserver",
-                    "--package=echoserver"
+                    "--bin=netcatchatroom",
+                    "--package=netcatchatroom"
                 ],
                 "filter": {
-                    "name": "echoserver",
+                    "name": "netcatchatroom",
                     "kind": "bin"
                 }
             },
@@ -25,16 +25,16 @@
         {
             "type": "lldb",
             "request": "launch",
-            "name": "Debug unit tests in executable 'echoserver'",
+            "name": "Debug unit tests in executable 'netcatchatroom'",
             "cargo": {
                 "args": [
                     "test",
                     "--no-run",
-                    "--bin=echoserver",
-                    "--package=echoserver"
+                    "--bin=netcatchatroom",
+                    "--package=netcatchatroom"
                 ],
                 "filter": {
-                    "name": "echoserver",
+                    "name": "netcatchatroom",
                     "kind": "bin"
                 }
             },

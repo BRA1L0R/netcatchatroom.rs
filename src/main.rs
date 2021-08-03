@@ -1,11 +1,11 @@
 // use std::time::Duration;
 
-use clienthandle::ProcessError;
+use clienthandle::HandleExit;
 use event::EventSystem;
-use std::{net::IpAddr, sync::Arc, time::Duration};
+use std::{sync::Arc, time::Duration};
 use tokio::{io, net::TcpListener};
 
-use crate::event::Event;
+use crate::clienthandle::DisconnectError;
 
 mod clienthandle;
 mod connection;
@@ -17,16 +17,7 @@ const BANTIME: Duration = Duration::from_secs(10);
 async fn message_logger(ms: Arc<EventSystem>) {
     let mut rx = ms.subscribe();
     while let Ok(evt) = rx.recv().await {
-        // println!("Received message: {:?}", msg);
-        println!("{:?}", evt);
-
-        let message: (IpAddr, String) = match evt {
-            Event::Message(msg) => (msg.sender, msg.message.content),
-            Event::Connect(ip) => (ip, "connected to the server".to_string()),
-            Event::Disconnect(ip) => (ip, "disconnected from the server".to_string()),
-        };
-
-        println!("{} > {} here", message.0, message.1);
+        println!("{}", evt);
     }
 }
 
@@ -56,18 +47,17 @@ async fn run() -> Result<(), io::Error> {
 
         // launch the coroutine
         tokio::spawn(async move {
-            if let Err(err) = clienthandle::process_client(socket, ms).await {
-                match err {
-                    ProcessError::Disconnected => {}
-                    ProcessError::Spam => limiter.add(remote, BANTIME).await,
-                    err => eprintln!("Error encountered: {:?}", err),
+            match clienthandle::process_client(socket, ms).await {
+                Err(HandleExit::Disconnect(DisconnectError::Spam)) => {
+                    // ban the client if disconnected for spam
+                    limiter.add(remote, BANTIME).await
                 }
+                // do nothing if client disconnected normally
+                Err(HandleExit::Disconnect(_)) => (),
+                // print error if disconnection reason was anything else
+                Err(err) => println!("{} exited with error: {:?}", remote, err),
+                _ => (),
             }
-            // out.unwrap_or_else(async |err| match err {
-            //     ProcessError::Disconnected => {}
-            //     ProcessError::Spam => limiter.add(socket.peer_addr().unwrap().ip(), time).await,
-            //     err => eprintln!("Error encountered: {:?}", err),
-            // });
         });
     }
 }

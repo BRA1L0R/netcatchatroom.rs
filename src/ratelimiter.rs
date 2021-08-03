@@ -23,10 +23,17 @@ impl RateLimiter {
     }
 
     pub async fn is_blacklisted(&self, ip: &IpAddr) -> bool {
-        let list = self.list.lock().await;
+        let mut list = self.list.lock().await;
         match list.get(ip) {
             None => false,
-            Some(v) => SystemTime::now() > *v,
+            Some(v) => {
+                let bled = SystemTime::now() < *v;
+                if !bled {
+                    list.remove(ip);
+                }
+
+                bled
+            }
         }
     }
 }

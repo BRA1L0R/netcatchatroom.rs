@@ -1,3 +1,4 @@
+use leaky_bucket::RateLimiter;
 use std::sync::Arc;
 use tokio::net::TcpStream;
 use tokio::sync::broadcast::error::{RecvError, SendError};
@@ -10,89 +11,115 @@ enum ProcessLoop {
     ServerEvent(Event),
 }
 
+#[derive(Debug, Clone)]
+pub enum DisconnectError {
+    EOF,
+    Spam,
+}
+
 #[derive(Debug)]
-pub enum ProcessError {
+pub enum HandleExit {
     IoError(std::io::Error),
 
     RecvError(RecvError),
     SendError(SendError<Event>),
 
-    Spam,
-    Disconnected,
+    Disconnect(DisconnectError),
 }
 
-impl From<RecvError> for ProcessError {
+impl From<RecvError> for HandleExit {
     fn from(err: RecvError) -> Self {
-        ProcessError::RecvError(err)
+        HandleExit::RecvError(err)
     }
 }
 
-impl From<SendError<Event>> for ProcessError {
+impl From<SendError<Event>> for HandleExit {
     fn from(err: SendError<Event>) -> Self {
-        ProcessError::SendError(err)
+        HandleExit::SendError(err)
     }
 }
 
-impl From<std::io::Error> for ProcessError {
+impl From<std::io::Error> for HandleExit {
     fn from(err: std::io::Error) -> Self {
-        ProcessError::IoError(err)
+        HandleExit::IoError(err)
     }
 }
 
-impl From<connection::ConnectionError> for ProcessError {
+impl From<connection::ConnectionError> for HandleExit {
     fn from(err: connection::ConnectionError) -> Self {
         match err {
-            connection::ConnectionError::IoError(err) => ProcessError::IoError(err),
-            connection::ConnectionError::Eof => ProcessError::Disconnected,
+            connection::ConnectionError::IoError(err) => HandleExit::IoError(err),
+            connection::ConnectionError::Eof => HandleExit::Disconnect(DisconnectError::EOF),
         }
     }
 }
 
-async fn handle_client(mut conn: Connection, ms: Arc<EventSystem>) -> Result<(), ProcessError> {
+async fn handle_client(mut conn: Connection, ms: Arc<EventSystem>) -> Result<(), HandleExit> {
     let sender = ms.sender();
     let mut sub = ms.subscribe();
 
     // send a connect event
     sender.send(Event::Connect(conn.remote()))?;
 
+    // setup a rate limiter using the leaky bucket algorithm
+    let limiter = RateLimiter::builder()
+        .max(10)
+        .initial(10)
+        .refill(5)
+        .interval(std::time::Duration::from_secs(1))
+        .build();
+
     loop {
-        // conn.stream.
         let evt = tokio::select! {
             msg = conn.read_message() => ProcessLoop::ConnectionMessage(msg?),
             msg = sub.recv() => ProcessLoop::ServerEvent(msg?),
         };
 
-        let evt = match evt {
-            ProcessLoop::ServerEvent(evt) => evt,
-            ProcessLoop::ConnectionMessage(message) if !message.content.is_empty() => {
-                let event = Event::Message(MessageEvent {
-                    sender: conn.remote(),
-                    message,
-                });
+        let message = match evt {
+            ProcessLoop::ConnectionMessage(message) if !message.content.is_empty() => message,
+            ProcessLoop::ServerEvent(evt) => {
+                conn.write_message(&Message {
+                    content: format!("{}\n", evt),
+                })
+                .await?;
 
-                sender.send(event)?;
                 continue;
             }
+
             _ => continue,
         };
 
-        if let Event::Message(msg) = evt {
-            let content = format!("<{}> {}\n", msg.sender, msg.message);
-            conn.write_message(&Message { content }).await?;
+        // if the leaky bucket does not contain enough tokens disconnect with a spam error
+        if limiter.balance() < 1 {
+            return Err(HandleExit::Disconnect(DisconnectError::Spam));
         }
+
+        // acquire one from the leaky bucket
+        limiter.acquire_one().await;
+
+        let event = Event::Message(MessageEvent {
+            sender: conn.remote(),
+            message,
+        });
+
+        // send message event
+        sender.send(event)?;
     }
 }
 
-pub async fn process_client(socket: TcpStream, ms: Arc<EventSystem>) -> Result<(), ProcessError> {
+pub async fn process_client(socket: TcpStream, ms: Arc<EventSystem>) -> Result<(), HandleExit> {
     let remote = socket.peer_addr()?.ip();
     let connection = connection::Connection::new(socket);
 
     handle_client(connection, ms.clone())
         .await
         .map_err(|err| match err {
-            ProcessError::Disconnected => {
-                ms.sender().send(Event::Disconnect(remote))?;
-                Err(ProcessError::Disconnected)
+            HandleExit::Disconnect(d) => {
+                // send out a disconnection event
+                ms.sender().send(Event::Disconnect(remote, d.clone()))?;
+
+                // return the error to the top function
+                Err(HandleExit::Disconnect(d))
             }
             err => Err(err),
         })

@@ -4,7 +4,7 @@ Simple netcat chatroom with rate limiting capabilities
 
 ## Todo
 
-- [ ] Rate limiter
+- [x] Rate limiter
 - [ ] IP hash instead of ip
 - [ ] Broadcasting client connection and disconnection on to the clients too
 - [ ] Move run code from main to lib.rs keeping only basic logic in main.rs
